@@ -103,6 +103,7 @@ typedef int ImGuiTextFlags;         // -> enum ImGuiTextFlags_         // Flags:
 
 // Not sure the best way to do this kind of deep integration, this was the easiest
 #include "imgui_richtext.h"
+#include "imgui_mainwindow.h"
 
 namespace ImStb
 {
@@ -639,7 +640,7 @@ struct ImGuiWindowSettings
     ImVec2      Size;
     ImVec2      ViewportPos;
     ImGuiID     ViewportId;
-    ImGuiID     DockId;         // ID of last known DockNode (even if the DockNode is invisible because it has only 1 active window), or 0 if none. 
+    ImGuiID     DockId;         // ID of last known DockNode (even if the DockNode is invisible because it has only 1 active window), or 0 if none.
     ImGuiID     ClassId;        // ID of window class if specified
     short       DockOrder;      // Order of the last time the window was visible within its DockNode. This is used to reorder windows that are reappearing on the same frame. Same value between windows that were active and windows that were none are possible.
     bool        Collapsed;
@@ -921,6 +922,10 @@ struct ImGuiDockNode
 
 struct ImGuiContext
 {
+    ImGui::ImRichTextElementCalcSizeCallback RichTextCalcSizeCallback;
+    ImGui::ImRichTextElementDrawCallback RichTextDrawCallback;
+    bool                    UseRichText;
+
     bool                    Initialized;
     bool                    FrameScopeActive;                   // Set by NewFrame(), cleared by EndFrame()
     bool                    FrameScopePushedImplicitWindow;     // Set by NewFrame(), cleared by EndFrame()
@@ -985,11 +990,12 @@ struct ImGuiContext
     ImGuiCond               NextTreeNodeOpenCond;
 
     // Viewports
-    ImVector<ImGuiViewportP*> Viewports;                        // Active viewports (always 1+, and generally 1 unless multi-viewports are enabled). Each viewports hold their copy of ImDrawData. 
+    ImVector<ImGuiViewportP*> Viewports;                        // Active viewports (always 1+, and generally 1 unless multi-viewports are enabled). Each viewports hold their copy of ImDrawData.
     ImGuiViewportP*         CurrentViewport;                    // We track changes of viewport (happening in Begin) so we can call Platform_OnChangedViewport()
     ImGuiViewportP*         MouseViewport;
     ImGuiViewportP*         MouseLastHoveredViewport;           // Last known viewport that was hovered by mouse (even if we are not hovering any viewport any more) + honoring the _NoInputs flag.
     ImGuiID                 PlatformLastFocusedViewport;        // Record of last focused platform window/viewport, when this changes we stamp the viewport as front-most
+    int                     FirstValidViewport;                 // When we bind a viewport to platform window, we must take the viewport into consideration so move/resize works seamsless
 
     // Navigation data (for gamepad/keyboard)
     ImGuiWindow*            NavWindow;                          // Focused window for navigation. Could be called 'FocusWindow'
@@ -1131,6 +1137,7 @@ struct ImGuiContext
         FontAtlasOwnedByContext = shared_font_atlas ? false : true;
         IO.Fonts = shared_font_atlas ? shared_font_atlas : IM_NEW(ImFontAtlas)();
 
+        UseRichText = false;
         Time = 0.0f;
         FrameCount = 0;
         FrameCountEnded = FrameCountPlatformEnded = FrameCountRendered = -1;
@@ -1169,6 +1176,7 @@ struct ImGuiContext
         CurrentViewport = NULL;
         MouseViewport = MouseLastHoveredViewport = NULL;
         PlatformLastFocusedViewport = 0;
+        FirstValidViewport = 1;
 
         NavWindow = NULL;
         NavId = NavActivateId = NavActivateDownId = NavActivatePressedId = NavInputId = 0;
@@ -1445,7 +1453,7 @@ public:
     float       CalcFontSize() const                    { return GImGui->FontBaseSize * FontWindowScale * FontDpiScale; }
     float       TitleBarHeight() const                  { return (Flags & ImGuiWindowFlags_NoTitleBar) ? 0.0f : CalcFontSize() + GImGui->Style.FramePadding.y * 2.0f; }
     ImRect      TitleBarRect() const                    { return ImRect(Pos, ImVec2(Pos.x + SizeFull.x, Pos.y + TitleBarHeight())); }
-    float       MenuBarHeight() const                   { return (Flags & ImGuiWindowFlags_MenuBar) ? DC.MenuBarOffset.y + CalcFontSize() + GImGui->Style.FramePadding.y * 2.0f : 0.0f; }
+    float       MenuBarHeight() const                   { return (Flags & ImGuiWindowFlags_TitleMenuBar) ? 0.0f : (Flags & ImGuiWindowFlags_MenuBar) ? DC.MenuBarOffset.y + CalcFontSize() + GImGui->Style.FramePadding.y * 2.0f : 0.0f; }
     ImRect      MenuBarRect() const                     { float y1 = Pos.y + TitleBarHeight(); return ImRect(Pos.x, y1, Pos.x + SizeFull.x, y1 + MenuBarHeight()); }
 };
 
@@ -1519,15 +1527,15 @@ struct ImGuiTabBar
     bool                VisibleTabWasSubmitted;
     short               LastTabItemIdx;         // For BeginTabItem()/EndTabItem()
     ImVec2              FramePadding;           // style.FramePadding locked at the time of BeginTabBar()
-    ImGuiTextBuffer     TabsNames;              // For non-docking tab bar we re-append names in a contiguous buffer. 
+    ImGuiTextBuffer     TabsNames;              // For non-docking tab bar we re-append names in a contiguous buffer.
 
     ImGuiTabBar();
     int                 GetTabOrder(const ImGuiTabItem* tab) const  { return Tabs.index_from_ptr(tab); }
-    const char*         GetTabName(const ImGuiTabItem* tab) const 
+    const char*         GetTabName(const ImGuiTabItem* tab) const
     {
         if (tab->Window)
             return tab->Window->Name;
-        IM_ASSERT(tab->NameOffset != -1 && tab->NameOffset < TabsNames.Buf.Size); 
+        IM_ASSERT(tab->NameOffset != -1 && tab->NameOffset < TabsNames.Buf.Size);
         return TabsNames.Buf.Data + tab->NameOffset;
     }
 };
@@ -1651,7 +1659,7 @@ namespace ImGui
     inline bool             IsNavInputDown(ImGuiNavInput n)                             { return GImGui->IO.NavInputs[n] > 0.0f; }
     inline bool             IsNavInputPressed(ImGuiNavInput n, ImGuiInputReadMode mode) { return GetNavInputAmount(n, mode) > 0.0f; }
     inline bool             IsNavInputPressedAnyOfTwo(ImGuiNavInput n1, ImGuiNavInput n2, ImGuiInputReadMode mode) { return (GetNavInputAmount(n1, mode) + GetNavInputAmount(n2, mode)) > 0.0f; }
-    
+
     // Docking
     // (some functions are only declared in imgui.cpp, see Docking section)
     IMGUI_API void          DockContextInitialize(ImGuiContext* ctx);

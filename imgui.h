@@ -722,7 +722,7 @@ namespace ImGui
     IMGUI_API void              DestroyPlatformWindows();                                       // call DestroyWindow platform functions for all viewports. call from back-end Shutdown() if you need to close platform windows before imgui shutdown. otherwise will be called by DestroyContext().
     IMGUI_API ImGuiViewport*    FindViewportByID(ImGuiID id);                                   // this is a helper for back-ends.
     IMGUI_API ImGuiViewport*    FindViewportByPlatformHandle(void* platform_handle);            // this is a helper for back-ends. the type platform_handle is decided by the back-end (e.g. HWND, MyWindow*, GLFWwindow* etc.)
-
+    
 } // namespace ImGui
 
 //-----------------------------------------------------------------------------
@@ -766,7 +766,8 @@ enum ImGuiWindowFlags_
     ImGuiWindowFlags_Popup                  = 1 << 26,  // Don't use! For internal use by BeginPopup()
     ImGuiWindowFlags_Modal                  = 1 << 27,  // Don't use! For internal use by BeginPopupModal()
     ImGuiWindowFlags_ChildMenu              = 1 << 28,  // Don't use! For internal use by BeginMenu()
-    ImGuiWindowFlags_DockNodeHost           = 1 << 29   // Don't use! For internal use by Begin()/NewFrame()
+    ImGuiWindowFlags_DockNodeHost           = 1 << 29,  // Don't use! For internal use by Begin()/NewFrame()
+    ImGuiWindowFlags_TitleMenuBar           = 1 << 30,  // Don't use! For internal use by BeginTitleMenuBar()/EndTitleMenuBar()
 
     // [Obsolete]
     //ImGuiWindowFlags_ShowBorders          = 1 << 7,   // --> Set style.FrameBorderSize=1.0f / style.WindowBorderSize=1.0f to enable borders around windows and items
@@ -2276,6 +2277,7 @@ struct ImGuiPlatformIO
 
     // (Optional) Platform functions (e.g. Win32, GLFW, SDL2)
     // Most of them are called by ImGui::UpdatePlatformWindows() and ImGui::RenderPlatformWindowsDefault().
+    void*   (*Platform_BindMainWindow)();
     void    (*Platform_CreateWindow)(ImGuiViewport* vp);                    // Create a new platform window for the given viewport
     void    (*Platform_DestroyWindow)(ImGuiViewport* vp);
     void    (*Platform_ShowWindow)(ImGuiViewport* vp);                      // Newly created windows are initially hidden so SetWindowPos/Size/Title can be called on them first
