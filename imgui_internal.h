@@ -101,6 +101,9 @@ typedef int ImGuiTextFlags;         // -> enum ImGuiTextFlags_         // Flags:
 // STB libraries includes
 //-------------------------------------------------------------------------
 
+// Not sure the best way to do this kind of deep integration, this was the easiest
+#include "imgui_richtext.h"
+
 namespace ImStb
 {
 

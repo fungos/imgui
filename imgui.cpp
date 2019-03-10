@@ -2409,6 +2409,15 @@ void ImGui::RenderTextClipped(const ImVec2& pos_min, const ImVec2& pos_max, cons
         return;
 
     ImGuiContext& g = *GImGui;
+    // if using rich text extension, detour the logic to the extended version that is more costly
+    if (g.UseRichText)
+    {
+        g.UseRichText = false;
+        RenderRichTextClipped(pos_min, pos_max, text, text_display_end, text_size_if_known, align, clip_rect);
+        g.UseRichText = true;
+        return;
+    }
+
     ImGuiWindow* window = g.CurrentWindow;
     RenderTextClippedEx(window->DrawList, pos_min, pos_max, text, text_display_end, text_size_if_known, align, clip_rect);
     if (g.LogEnabled)
@@ -3797,6 +3806,7 @@ void ImGui::Initialize(ImGuiContext* context)
     IM_ASSERT(g.DockContext == NULL);
     DockContextInitialize(&g);
 
+    g.UseRichText = false;
     g.Initialized = true;
 }
 
@@ -4235,6 +4245,15 @@ ImVec2 ImGui::CalcTextSize(const char* text, const char* text_end, bool hide_tex
         text_display_end = FindRenderedTextEnd(text, text_end);      // Hide anything after a '##' string
     else
         text_display_end = text_end;
+
+    // if using rich text extension, detour the logic to the extended version that is more costly
+    if (g.UseRichText)
+    {
+        g.UseRichText = false;
+        ImVec2 size = CalcRichTextSize(text, text_display_end, hide_text_after_double_hash, wrap_width);
+        g.UseRichText = true;
+        return size;
+    }
 
     ImFont* font = g.Font;
     const float font_size = g.FontSize;
