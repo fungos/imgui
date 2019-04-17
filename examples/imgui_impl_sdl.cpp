@@ -238,7 +238,7 @@ void ImGui_ImplSDL2_Shutdown()
     memset(g_MouseCursors, 0, sizeof(g_MouseCursors));
 }
 
-// This code is incredibly messy because some of the functions we need for full viewport support are not available in SDL < 2.0.4. 
+// This code is incredibly messy because some of the functions we need for full viewport support are not available in SDL < 2.0.4.
 static void ImGui_ImplSDL2_UpdateMousePosAndButtons()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -260,7 +260,7 @@ static void ImGui_ImplSDL2_UpdateMousePosAndButtons()
     {
         io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
     }
-    
+
     // [2]
     // Set Dear ImGui mouse pos from OS mouse pos + get buttons. (this is the common behavior)
     int mouse_x_local, mouse_y_local;
@@ -366,6 +366,20 @@ struct ImGuiViewportDataSDL2
     ~ImGuiViewportDataSDL2() { IM_ASSERT(Window == NULL && GLContext == NULL); }
 };
 
+static void* ImGui_ImplSDL2_BindMainWindow()
+{
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGuiViewportDataSDL2* data = (ImGuiViewportDataSDL2*)viewport->PlatformUserData;
+    int wW, wH, wX, wY;
+    SDL_GetWindowSize(data->Window, &wW, &wH);
+    SDL_GetWindowPosition(data->Window, &wX, &wY);
+    viewport->Pos = ImVec2(float(wX), float(wY));
+    viewport->Size = ImVec2(float(wW), float(wH));
+    viewport->DpiScale = 1.0f;
+    viewport->PlatformHandle = (void*)data->Window;
+    return viewport->PlatformHandle;
+}
+
 static void ImGui_ImplSDL2_CreateWindow(ImGuiViewport* viewport)
 {
     ImGuiViewportDataSDL2* data = IM_NEW(ImGuiViewportDataSDL2)();
@@ -394,7 +408,7 @@ static void ImGui_ImplSDL2_CreateWindow(ImGuiViewport* viewport)
     sdl_flags |= (viewport->Flags & ImGuiViewportFlags_TopMost) ? SDL_WINDOW_ALWAYS_ON_TOP : 0;
 #endif
     data->Window = SDL_CreateWindow("No Title Yet", (int)viewport->Pos.x, (int)viewport->Pos.y, (int)viewport->Size.x, (int)viewport->Size.y, sdl_flags);
-    data->WindowOwned = true; 
+    data->WindowOwned = true;
     if (use_opengl)
     {
         data->GLContext = SDL_GL_CreateContext(data->Window);
@@ -538,7 +552,7 @@ static int ImGui_ImplSDL2_CreateVkSurface(ImGuiViewport* viewport, ImU64 vk_inst
     ImGuiViewportDataSDL2* data = (ImGuiViewportDataSDL2*)viewport->PlatformUserData;
     (void)vk_allocator;
     SDL_bool ret = SDL_Vulkan_CreateSurface(data->Window, (VkInstance)vk_instance, (VkSurfaceKHR*)out_vk_surface);
-    return ret ? 0 : 1; // ret ? VK_SUCCESS : VK_NOT_READY 
+    return ret ? 0 : 1; // ret ? VK_SUCCESS : VK_NOT_READY
 }
 #endif // SDL_HAS_VULKAN
 
@@ -574,6 +588,7 @@ static void ImGui_ImplSDL2_InitPlatformInterface(SDL_Window* window, void* sdl_g
 {
     // Register platform interface (will be coupled with a renderer interface)
     ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Platform_BindMainWindow = ImGui_ImplSDL2_BindMainWindow;
     platform_io.Platform_CreateWindow = ImGui_ImplSDL2_CreateWindow;
     platform_io.Platform_DestroyWindow = ImGui_ImplSDL2_DestroyWindow;
     platform_io.Platform_ShowWindow = ImGui_ImplSDL2_ShowWindow;
