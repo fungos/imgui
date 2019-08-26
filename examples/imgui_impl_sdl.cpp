@@ -200,15 +200,21 @@ static bool ImGui_ImplSDL2_Init(SDL_Window* window, void* sdl_gl_context)
     g_MouseCursors[ImGuiMouseCursor_Hand] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
 
     // Our mouse update function expect PlatformHandle to be filled for the main viewport
-    ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-    main_viewport->PlatformHandle = (void*)window;
+    if (!(SDL_GetWindowFlags(g_Window) & SDL_WINDOW_HIDDEN))
+    {
+        ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        main_viewport->PlatformHandle = (void*)window;
 #if defined(_WIN32)
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    if (SDL_GetWindowWMInfo(window, &info))
-        main_viewport->PlatformHandleRaw = info.info.win.window;
+        SDL_SysWMinfo info;
+        SDL_VERSION(&info.version);
+        if (SDL_GetWindowWMInfo(window, &info))
+            main_viewport->PlatformHandleRaw = info.info.win.window;
 #endif
-
+    }
+    else
+    {
+        ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_PlatformNoMainViewport;
+    }
     // We need SDL_CaptureMouse(), SDL_GetGlobalMouseState() from SDL 2.0.4+ to support multiple viewports.
     // We left the call to ImGui_ImplSDL2_InitPlatformInterface() outside of #ifdef to avoid unused-function warnings.
     if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) && (io.BackendFlags & ImGuiBackendFlags_PlatformHasViewports))
@@ -633,12 +639,34 @@ static void ImGui_ImplSDL2_UpdateMonitors()
     }
 }
 
+static ImGuiViewport* ImGui_ImplSDL2_RegisterUserWindow(void* platform_window)
+{
+    static int nextAdditionalViewportID = 0x11111;
+    SDL_Window* window = (SDL_Window*)platform_window;
+    ImGuiViewportDataSDL2* data = IM_NEW(ImGuiViewportDataSDL2)();
+    data->Window = window;
+    data->WindowID = SDL_GetWindowID(window);
+    data->WindowOwned = false;
+    data->GLContext = SDL_GL_GetCurrentContext();
+    return ImGui::RegisterPlatformWindow(nextAdditionalViewportID++, window, data, false);
+}
+
+static void ImGui_ImplSDL2_UnregisterUserWindow(ImGuiViewport *viewport)
+{
+    ImGui::UnregisterPlatformWindow(viewport);
+    ImGuiViewportDataSDL2* data = (ImGuiViewportDataSDL2*)viewport->PlatformUserData;
+    IM_ASSERT(!data->WindowOwned);
+    ImGui_ImplSDL2_DestroyWindow(viewport);
+}
+
 static void ImGui_ImplSDL2_InitPlatformInterface(SDL_Window* window, void* sdl_gl_context)
 {
     // Register platform interface (will be coupled with a renderer interface)
     ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
     platform_io.Platform_CreateWindow = ImGui_ImplSDL2_CreateWindow;
     platform_io.Platform_DestroyWindow = ImGui_ImplSDL2_DestroyWindow;
+    platform_io.Platform_RegisterUserWindow = ImGui_ImplSDL2_RegisterUserWindow;
+    platform_io.Platform_UnregisterUserWindow = ImGui_ImplSDL2_UnregisterUserWindow;
     platform_io.Platform_ShowWindow = ImGui_ImplSDL2_ShowWindow;
     platform_io.Platform_SetWindowPos = ImGui_ImplSDL2_SetWindowPos;
     platform_io.Platform_GetWindowPos = ImGui_ImplSDL2_GetWindowPos;
@@ -664,17 +692,27 @@ static void ImGui_ImplSDL2_InitPlatformInterface(SDL_Window* window, void* sdl_g
 
     ImGui_ImplSDL2_UpdateMonitors();
 
-    // Register main window handle (which is owned by the main application, not by us)
-    ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-    ImGuiViewportDataSDL2* data = IM_NEW(ImGuiViewportDataSDL2)();
-    data->Window = window;
-    data->WindowID = SDL_GetWindowID(window);
-    data->WindowOwned = false;
-    data->GLContext = sdl_gl_context;
-    main_viewport->PlatformUserData = data;
-    main_viewport->PlatformHandle = data->Window;
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN))
+    {
+        // Register main window handle (which is owned by the main application, not by us)
+        // could probably use ImGui_ImplSDL2_RegisterUserWindow
+        ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        ImGuiViewportDataSDL2* data = IM_NEW(ImGuiViewportDataSDL2)();
+        data->Window = window;
+        data->WindowID = SDL_GetWindowID(window);
+        data->WindowOwned = false;
+        data->GLContext = sdl_gl_context;
+        main_viewport->PlatformUserData = data;
+        main_viewport->PlatformHandle = data->Window;
+    }
+    else
+    {
+        ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_PlatformNoMainViewport;
+    }
 }
 
 static void ImGui_ImplSDL2_ShutdownPlatformInterface()
 {
 }
+
+

@@ -22,7 +22,31 @@
 #include IMGUI_IMPL_OPENGL_LOADER_CUSTOM
 #endif
 
+ImGuiViewport* CreateAdditionalWindow(SDL_Window* mainWindow)
+{
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+
+    SDL_GLContext backup_context = SDL_GL_GetCurrentContext();
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+    SDL_GL_MakeCurrent(mainWindow, backup_context);
+    Uint32 window_flags = SDL_GetWindowFlags(mainWindow);
+    SDL_Window* w = SDL_CreateWindow("Dear ImGui SDL2+OpenGL3 example - additional host window", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags);
+    SDL_GL_MakeCurrent(w, backup_context);
+    ImGuiViewport* v = platform_io.Platform_RegisterUserWindow(w);
+    SDL_GL_SetSwapInterval(0);
+    SDL_GL_MakeCurrent(mainWindow, backup_context);
+
+    return v;
+}
+
 // Main code
+void DestroyAdditionalWindow(SDL_Window* w, ImGuiViewport* v)
+{
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Platform_UnregisterUserWindow(v);
+    SDL_DestroyWindow(w);
+}
+
 int main(int, char**)
 {
     // Setup SDL
@@ -31,6 +55,9 @@ int main(int, char**)
         printf("Error: %s\n", SDL_GetError());
         return -1;
     }
+
+    // flag to indicate whether main window should be displayed and used as a viewport
+    bool hasMainViewport = true;
 
     // Decide GL+GLSL versions
 #if __APPLE__
@@ -53,7 +80,11 @@ int main(int, char**)
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_DisplayMode current;
+    SDL_GetCurrentDisplayMode(0, &current);
+    // even if there's no main window we still need to create a hidden window to share the context
+    int hidden = (hasMainViewport ? 0 : SDL_WINDOW_HIDDEN);
+    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | hidden);
     SDL_Window* window = SDL_CreateWindow("Dear ImGui SDL2+OpenGL3 example", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags);
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, gl_context);
@@ -118,9 +149,12 @@ int main(int, char**)
     //IM_ASSERT(font != NULL);
 
     // Our state
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    bool show_main_window = true;
     bool show_demo_window = true;
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    ImVector<ImGuiViewport*> additionalHostViewports;
 
     // Main loop
     bool done = false;
@@ -139,6 +173,17 @@ int main(int, char**)
                 done = true;
             if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE && event.window.windowID == SDL_GetWindowID(window))
                 done = true;
+            for (int i = 0; i < additionalHostViewports.Size; i++)
+            {
+                ImGuiViewport* v = additionalHostViewports[i];
+                SDL_Window* w = (SDL_Window *)v->PlatformHandle;
+                if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE && event.window.windowID == SDL_GetWindowID(w))
+                {
+                    DestroyAdditionalWindow(w, v);
+                    additionalHostViewports.erase(additionalHostViewports.Data + i);
+                    i--;
+                }
+            }
         }
 
         // Start the Dear ImGui frame
@@ -155,7 +200,8 @@ int main(int, char**)
             static float f = 0.0f;
             static int counter = 0;
 
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
+            bool* popen = hasMainViewport ? NULL : &show_main_window;
+            ImGui::Begin("Hello, world!", popen);                   // Create a window called "Hello, world!" and append into it.
 
             ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
             ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
@@ -168,7 +214,8 @@ int main(int, char**)
                 counter++;
             ImGui::SameLine();
             ImGui::Text("counter = %d", counter);
-
+            if (ImGui::Button("New Host Window"))
+                additionalHostViewports.push_back(CreateAdditionalWindow(window));
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
             ImGui::End();
         }
@@ -189,7 +236,7 @@ int main(int, char**)
         glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
+    	
         // Update and Render additional Platform Windows
         // (Platform functions may change the current OpenGL context, so we save/restore it to make it easier to paste this code elsewhere.
         //  For this specific demo app we could also call SDL_GL_MakeCurrent(window, gl_context) directly)
@@ -199,10 +246,26 @@ int main(int, char**)
             SDL_GLContext backup_current_context = SDL_GL_GetCurrentContext();
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
+            for (int i = 0; i < additionalHostViewports.Size; i++)
+            {
+                ImGuiViewport* v = additionalHostViewports[i];
+                if (platform_io.Platform_RenderWindow) platform_io.Platform_RenderWindow(v, NULL);
+                if (platform_io.Renderer_RenderWindow) platform_io.Renderer_RenderWindow(v, NULL);
+                if (platform_io.Platform_SwapBuffers) platform_io.Platform_SwapBuffers(v, NULL);
+                if (platform_io.Renderer_SwapBuffers) platform_io.Renderer_SwapBuffers(v, NULL);
+            }
             SDL_GL_MakeCurrent(backup_current_window, backup_current_context);
         }
 
         SDL_GL_SwapWindow(window);
+    }
+
+    // Cleanup any other additional sample user windows created
+    for (int i = 0; i < additionalHostViewports.Size; i++)
+    {
+        ImGuiViewport* v = additionalHostViewports[i];
+        SDL_Window* w = (SDL_Window *)v->PlatformHandle;
+        DestroyAdditionalWindow(w, v);
     }
 
     // Cleanup

@@ -202,11 +202,18 @@ static bool ImGui_ImplGlfw_Init(GLFWwindow* window, bool install_callbacks, Glfw
     }
 
     // Our mouse update function expect PlatformHandle to be filled for the main viewport
-    ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-    main_viewport->PlatformHandle = (void*)g_Window;
+    if (glfwGetWindowAttrib(g_Window, GLFW_VISIBLE))
+    {
+        ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        main_viewport->PlatformHandle = (void*)g_Window;
 #ifdef _WIN32
-    main_viewport->PlatformHandleRaw = glfwGetWin32Window(g_Window);
+        main_viewport->PlatformHandleRaw = glfwGetWin32Window(g_Window);
 #endif
+    }
+    else
+    {
+        ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_PlatformNoMainViewport;
+    }
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         ImGui_ImplGlfw_InitPlatformInterface();
 
@@ -720,12 +727,32 @@ static void ImGui_ImplGlfw_MonitorCallback(GLFWmonitor*, int)
     g_WantUpdateMonitors = true;
 }
 
+static ImGuiViewport* ImGui_ImplGlfw_RegisterUserWindow(void* platform_window)
+{
+    static int nextAdditionalViewportID = 0x11111;
+    GLFWwindow* window = (GLFWwindow*)platform_window;
+    ImGuiViewportDataGlfw* data = IM_NEW(ImGuiViewportDataGlfw)();
+    data->Window = window;
+    data->WindowOwned = false;
+    return ImGui::RegisterPlatformWindow(nextAdditionalViewportID++, window, data, true);
+}
+
+static void ImGui_ImplGlfw_UnregisterUserWindow(ImGuiViewport *viewport)
+{
+    ImGui::UnregisterPlatformWindow(viewport);
+    ImGuiViewportDataGlfw* data = (ImGuiViewportDataGlfw*)viewport->PlatformUserData;
+    IM_ASSERT(!data->WindowOwned);
+    ImGui_ImplGlfw_DestroyWindow(viewport);
+}
+
 static void ImGui_ImplGlfw_InitPlatformInterface()
 {
     // Register platform interface (will be coupled with a renderer interface)
     ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
     platform_io.Platform_CreateWindow = ImGui_ImplGlfw_CreateWindow;
     platform_io.Platform_DestroyWindow = ImGui_ImplGlfw_DestroyWindow;
+    platform_io.Platform_RegisterUserWindow = ImGui_ImplGlfw_RegisterUserWindow;
+    platform_io.Platform_UnregisterUserWindow = ImGui_ImplGlfw_UnregisterUserWindow;
     platform_io.Platform_ShowWindow = ImGui_ImplGlfw_ShowWindow;
     platform_io.Platform_SetWindowPos = ImGui_ImplGlfw_SetWindowPos;
     platform_io.Platform_GetWindowPos = ImGui_ImplGlfw_GetWindowPos;
@@ -752,12 +779,19 @@ static void ImGui_ImplGlfw_InitPlatformInterface()
     glfwSetMonitorCallback(ImGui_ImplGlfw_MonitorCallback);
 
     // Register main window handle (which is owned by the main application, not by us)
-    ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-    ImGuiViewportDataGlfw* data = IM_NEW(ImGuiViewportDataGlfw)();
-    data->Window = g_Window;
-    data->WindowOwned = false;
-    main_viewport->PlatformUserData = data;
-    main_viewport->PlatformHandle = (void*)g_Window;
+    if (glfwGetWindowAttrib(g_Window, GLFW_VISIBLE))
+    {
+        ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        ImGuiViewportDataGlfw* data = IM_NEW(ImGuiViewportDataGlfw)();
+        data->Window = g_Window;
+        data->WindowOwned = false;
+        main_viewport->PlatformUserData = data;
+        main_viewport->PlatformHandle = (void*)g_Window;
+    }
+    else
+    {
+        ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_PlatformNoMainViewport;
+    }
 }
 
 static void ImGui_ImplGlfw_ShutdownPlatformInterface()

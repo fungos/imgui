@@ -247,6 +247,9 @@ namespace ImGui
     IMGUI_API void          StyleColorsClassic(ImGuiStyle* dst = NULL); // classic imgui style
     IMGUI_API void          StyleColorsLight(ImGuiStyle* dst = NULL);   // best used with borders and a custom, thicker font
 
+    IMGUI_API ImGuiViewport* RegisterPlatformWindow(ImGuiID id, void* platformHandle, void* platformUserData, bool createdWindow = false);
+    IMGUI_API void           UnregisterPlatformWindow(ImGuiViewport* viewport);
+
     // Windows
     // - Begin() = push window to the stack and start appending to it. End() = pop window from the stack.
     // - You may append multiple times to the same window during the same frame.
@@ -730,7 +733,10 @@ namespace ImGui
     // (Optional) Platform/OS interface for multi-viewport support
     // Note: You may use GetWindowViewport() to get the current viewport of the current window.
     IMGUI_API ImGuiPlatformIO&  GetPlatformIO();                                                // platform/renderer functions, for back-end to setup + viewports list.
-    IMGUI_API ImGuiViewport*    GetMainViewport();                                              // main viewport. same as GetPlatformIO().MainViewport == GetPlatformIO().Viewports[0].
+    IMGUI_API ImGuiViewport*    GetMainViewport();                                              // gets the main viewport (creates the viewport if necessary, unless the ImGuiBackendFlags_PlatformNoMainViewport flag is set in which case it returns the first viewport (host viewports and visible viewports are given priority) or null if there are no viewports)
+    IMGUI_API ImVec2            GetMainViewportPos();                                           // gets the main viewport pos (or main monitor position if there are no viewports)
+    IMGUI_API ImVec2            GetMainViewportSize();                                          // gets the main viewport size (or main monitor size if there are no viewports)
+    IMGUI_API void              SetNextWindowMainViewport();                                    // sets the next window viewport to the main viewport (if there is one)
     IMGUI_API void              UpdatePlatformWindows();                                        // call in main loop. will call CreateWindow/ResizeWindow/etc. platform functions for each secondary viewport, and DestroyWindow for each inactive viewport.
     IMGUI_API void              RenderPlatformWindowsDefault(void* platform_arg = NULL, void* renderer_arg = NULL); // call in main loop. will call RenderWindow/SwapBuffers platform functions for each secondary viewport which doesn't have the ImGuiViewportFlags_Minimized flag set. May be reimplemented by user for custom rendering needs.
     IMGUI_API void              DestroyPlatformWindows();                                       // call DestroyWindow platform functions for all viewports. call from back-end Shutdown() if you need to close platform windows before imgui shutdown. otherwise will be called by DestroyContext().
@@ -1084,7 +1090,8 @@ enum ImGuiBackendFlags_
     // [BETA] Viewports
     ImGuiBackendFlags_PlatformHasViewports  = 1 << 10,  // Back-end Platform supports multiple viewports.
     ImGuiBackendFlags_HasMouseHoveredViewport=1 << 11,  // Back-end Platform supports setting io.MouseHoveredViewport to the viewport directly under the mouse _IGNORING_ viewports with the ImGuiViewportFlags_NoInputs flag and _REGARDLESS_ of whether another viewport is focused and may be capturing the mouse. This information is _NOT EASY_ to provide correctly with most high-level engines! Don't set this without studying how the examples/ back-end handle it!
-    ImGuiBackendFlags_RendererHasViewports  = 1 << 12   // Back-end Renderer supports multiple viewports.
+    ImGuiBackendFlags_RendererHasViewports  = 1 << 12,  // Back-end Renderer supports multiple viewports.
+    ImGuiBackendFlags_PlatformNoMainViewport= 1 << 13   // Back-end Platform doesn't provide a main viewport
 };
 
 // Enumeration for PushStyleColor() / PopStyleColor()
@@ -2327,6 +2334,7 @@ struct ImFont
 struct ImGuiPlatformMonitor
 {
     ImVec2  MainPos, MainSize;  // Coordinates of the area displayed on this monitor (Min = upper left, Max = bottom right)
+    // TODO: saying these are optional makes sense to me since some platforms may not differentiate between main and working areas, but it's not clear what these values should be set to in those cases (i.e. should they be set the same as the main area so they can always be used? is there a flag to check whether these are valid? is there a specific valid used to indicate they are invalid?)
     ImVec2  WorkPos, WorkSize;  // (Optional) Coordinates without task bars / side bars / menu bars. imgui uses this to avoid positioning popups/tooltips inside this region.
     float   DpiScale;           // 1.0f = 96 DPI
     ImGuiPlatformMonitor() { MainPos = MainSize = WorkPos = WorkSize = ImVec2(0,0); DpiScale = 1.0f; }
@@ -2377,6 +2385,10 @@ struct ImGuiPlatformIO
     void    (*Renderer_RenderWindow)(ImGuiViewport* vp, void* render_arg);  // (Optional) Clear targets, Render viewport->DrawData
     void    (*Renderer_SwapBuffers)(ImGuiViewport* vp, void* render_arg);   // (Optional) Call Present/SwapBuffers (renderer side)
 
+    // (Optional) Extended functions (e.g. Platforms that support multiple heads)
+    ImGuiViewport* (*Platform_RegisterUserWindow)(void* platform_handle);   // Register a user created window to transfer ownership and hosting ImGui windows
+    void    (*Platform_UnregisterUserWindow)(ImGuiViewport* vp);            // Unregister a previously registered user window
+
     // (Optional) List of monitors (updated by: app/back-end, used by: imgui to clamp popups/tooltips within same monitor and not have them straddle monitors)
     ImVector<ImGuiPlatformMonitor>  Monitors;
 
@@ -2385,8 +2397,8 @@ struct ImGuiPlatformIO
     //------------------------------------------------------------------
 
     // List of viewports (the list is updated by calling ImGui::EndFrame or ImGui::Render)
-    ImGuiViewport*                  MainViewport;                           // Guaranteed to be == Viewports[0]
-    ImVector<ImGuiViewport*>        Viewports;                              // Main viewports, followed by all secondary viewports. 
+    ImGuiViewport*                  MainViewport;                           // The main viewport (unless the ImGuiBackendFlags_PlatformNoMainViewport flag is set in which case it returns the first viewport (host viewports and visible viewports are given priority) or null if there are no viewports)
+    ImVector<ImGuiViewport*>        Viewports;                              // all viewports including main and secondary
     ImGuiPlatformIO()               { memset(this, 0, sizeof(*this)); }     // Zero clear
 };
 
@@ -2416,6 +2428,7 @@ struct ImGuiViewport
     float               DpiScale;               // 1.0f = 96 DPI = No extra scale
     ImDrawData*         DrawData;               // The ImDrawData corresponding to this viewport. Valid after Render() and until the next call to NewFrame().
     ImGuiID             ParentViewportId;       // (Advanced) 0: no parent. Instruct the platform back-end to setup a parent/child relationship between platform windows.
+    bool                HostManagedWindow;      // Indicates whether the window is created and managed by the host application or the platform
 
     void*               RendererUserData;       // void* to hold custom data structure for the renderer (e.g. swap chain, frame-buffers etc.)
     void*               PlatformUserData;       // void* to hold custom data structure for the OS / platform (e.g. windowing info, render context)
@@ -2425,7 +2438,7 @@ struct ImGuiViewport
     bool                PlatformRequestMove;    // Platform window requested move (e.g. window was moved by the OS / host window manager, authoritative position will be OS window position)
     bool                PlatformRequestResize;  // Platform window requested resize (e.g. window was resized by the OS / host window manager, authoritative size will be OS window size)
 
-    ImGuiViewport()     { ID = 0; Flags = 0; DpiScale = 0.0f; DrawData = NULL; ParentViewportId = 0; RendererUserData = PlatformUserData = PlatformHandle = PlatformHandleRaw = NULL; PlatformRequestClose = PlatformRequestMove = PlatformRequestResize = false; }
+    ImGuiViewport()     { ID = 0; Flags = 0; DpiScale = 0.0f; DrawData = NULL; ParentViewportId = 0; HostManagedWindow = false; RendererUserData = PlatformUserData = PlatformHandle = PlatformHandleRaw = NULL; PlatformRequestClose = PlatformRequestMove = PlatformRequestResize = false; }
     ~ImGuiViewport()    { IM_ASSERT(PlatformUserData == NULL && RendererUserData == NULL); }
 };
 

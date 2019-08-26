@@ -266,7 +266,7 @@ void ImGui::ShowDemoWindow(bool* p_open)
     if (no_close)           p_open = NULL; // Don't pass our bool* to Begin
 
     // We specify a default position/size in case there's no data in the .ini file. Typically this isn't required! We only do it to make the Demo applications a little more welcoming.
-    ImVec2 main_viewport_pos = ImGui::GetMainViewport()->Pos;
+    ImVec2 main_viewport_pos = ImGui::GetMainViewportPos();
     ImGui::SetNextWindowPos(ImVec2(main_viewport_pos.x + 650, main_viewport_pos.y + 20), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(550, 680), ImGuiCond_FirstUseEver);
 
@@ -4289,11 +4289,12 @@ static void ShowExampleAppSimpleOverlay(bool* p_open)
     ImGuiIO& io = ImGui::GetIO();
     if (corner != -1)
     {
-        ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImVec2 window_pos = ImVec2((corner & 1) ? (viewport->Pos.x + viewport->Size.x - DISTANCE) : (viewport->Pos.x + DISTANCE), (corner & 2) ? (viewport->Pos.y + viewport->Size.y - DISTANCE) : (viewport->Pos.y + DISTANCE));
+        ImVec2 mvpPos = ImGui::GetMainViewportPos();
+        ImVec2 mvpSize = ImGui::GetMainViewportSize();
+        ImVec2 window_pos = ImVec2((corner & 1) ? (mvpPos.x + mvpSize.x - DISTANCE) : (mvpPos.x + DISTANCE), (corner & 2) ? (mvpPos.y + mvpSize.y - DISTANCE) : (mvpPos.y + DISTANCE));
         ImVec2 window_pos_pivot = ImVec2((corner & 1) ? 1.0f : 0.0f, (corner & 2) ? 1.0f : 0.0f);
         ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
-        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::SetNextWindowMainViewport();
     }
     ImGui::SetNextWindowBgAlpha(0.35f); // Transparent background
     if (ImGui::Begin("Example: Simple overlay", p_open, (corner != -1 ? ImGuiWindowFlags_NoMove : 0) | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav))
@@ -4512,10 +4513,9 @@ void ShowExampleAppDockSpace(bool* p_open)
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
     if (opt_fullscreen)
     {
-        ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(viewport->Pos);
-        ImGui::SetNextWindowSize(viewport->Size);
-        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::SetNextWindowPos(ImGui::GetMainViewportPos());
+        ImGui::SetNextWindowSize(ImGui::GetMainViewportSize());
+        ImGui::SetNextWindowMainViewport();
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;

@@ -35,12 +35,32 @@ static void glfw_error_callback(int error, const char* description)
     fprintf(stderr, "Glfw Error %d: %s\n", error, description);
 }
 
+void CreateAdditionalViewport(GLFWwindow* mainWindow, ImVector<ImGuiViewport*>& additionalHostViewports)
+{
+    glfwWindowHint(GLFW_DECORATED, true);
+    GLFWwindow* w = glfwCreateWindow(1280, 720, "Dear ImGui GLFW+OpenGL2 example - additional host window", NULL, mainWindow);
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    ImGuiViewport* v = platform_io.Platform_RegisterUserWindow(w);
+    glfwMakeContextCurrent(w);
+    //glfwSwapInterval(1); // Enable vsync
+    glfwMakeContextCurrent(mainWindow);
+    additionalHostViewports.push_back(v);
+    glfwShowWindow(w);
+}
+
 int main(int, char**)
 {
     // Setup window
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
         return 1;
+
+    // flag to indicate whether main window should be displayed and used as a viewport
+    bool hasMainViewport = true;
+
+    // even if there's no main window we still need to create a hidden window to share the context
+    if (!hasMainViewport)
+        glfwWindowHint(GLFW_VISIBLE, 0);
 
     // Decide GL+GLSL versions
 #if __APPLE__
@@ -125,13 +145,31 @@ int main(int, char**)
     //IM_ASSERT(font != NULL);
 
     // Our state
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    bool show_main_window = true;
     bool show_demo_window = true;
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    ImVector<ImGuiViewport*> additionalHostViewports;
 
     // Main loop
     while (!glfwWindowShouldClose(window))
     {
+        for (int i = 0; i < additionalHostViewports.Size; i++)
+        {
+            ImGuiViewport* v = additionalHostViewports[i];
+            GLFWwindow* w = (GLFWwindow *)v->PlatformHandle;
+            if (glfwWindowShouldClose(w))
+            {
+                ImGui::UnregisterPlatformWindow(v);
+                if (platform_io.Platform_DestroyWindow)
+                    platform_io.Platform_DestroyWindow(v);
+                IM_DELETE(v);
+                glfwDestroyWindow(w);
+                additionalHostViewports.erase(additionalHostViewports.Data + i);
+                i--;
+            }
+        }
         // Poll and handle events (inputs, window resize, etc.)
         // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
         // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application.
@@ -152,8 +190,8 @@ int main(int, char**)
         {
             static float f = 0.0f;
             static int counter = 0;
-
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
+            bool* popen = hasMainViewport ? NULL : &show_main_window;
+            ImGui::Begin("Hello, world!", popen);                   // Create a window called "Hello, world!" and append into it.
 
             ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
             ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
@@ -166,7 +204,8 @@ int main(int, char**)
                 counter++;
             ImGui::SameLine();
             ImGui::Text("counter = %d", counter);
-
+            if (ImGui::Button("New Host Viewport"))
+                CreateAdditionalViewport(window, additionalHostViewports);
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
             ImGui::End();
         }
@@ -189,7 +228,7 @@ int main(int, char**)
         glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    	
+
         // Update and Render additional Platform Windows
         // (Platform functions may change the current OpenGL context, so we save/restore it to make it easier to paste this code elsewhere.
         //  For this specific demo app we could also call glfwMakeContextCurrent(window) directly)
@@ -198,10 +237,20 @@ int main(int, char**)
             GLFWwindow* backup_current_context = glfwGetCurrentContext();
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
+            for (int i = 0; i < additionalHostViewports.Size; i++)
+            {
+                ImGuiViewport* v = additionalHostViewports[i];
+                if (platform_io.Platform_RenderWindow) platform_io.Platform_RenderWindow(v, NULL);
+                if (platform_io.Renderer_RenderWindow) platform_io.Renderer_RenderWindow(v, NULL);
+                if (platform_io.Platform_SwapBuffers) platform_io.Platform_SwapBuffers(v, NULL);
+                if (platform_io.Renderer_SwapBuffers) platform_io.Renderer_SwapBuffers(v, NULL);
+            }
             glfwMakeContextCurrent(backup_current_context);
         }
 
         glfwSwapBuffers(window);
+        if (!show_main_window)
+            glfwSetWindowShouldClose(window, 1);
     }
 
     // Cleanup
