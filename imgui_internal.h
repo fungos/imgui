@@ -990,6 +990,10 @@ struct ImGuiDockNode
 
 struct ImGuiContext
 {
+    ImGui::ImRichTextElementCalcSizeCallback RichTextCalcSizeCallback;
+    ImGui::ImRichTextElementDrawCallback RichTextDrawCallback;
+    bool                    UseRichText;
+
     bool                    Initialized;
     bool                    FrameScopeActive;                   // Set by NewFrame(), cleared by EndFrame()
     bool                    FrameScopePushedFallbackWindow;     // Set by NewFrame(), cleared by EndFrame()
@@ -1070,6 +1074,7 @@ struct ImGuiContext
     ImGuiViewportP*         MouseLastHoveredViewport;           // Last known viewport that was hovered by mouse (even if we are not hovering any viewport any more) + honoring the _NoInputs flag.
     ImGuiID                 PlatformLastFocusedViewport;        // Record of last focused platform window/viewport, when this changes we stamp the viewport as front-most
     int                     ViewportFrontMostStampCount;        // Every time the front-most window changes, we stamp its viewport with an incrementing counter
+    int                     FirstValidViewport;                 // When we bind a viewport to platform window, we must take the viewport into consideration so move/resize works seamsless
 
     // Navigation data (for gamepad/keyboard)
     ImGuiWindow*            NavWindow;                          // Focused window for navigation. Could be called 'FocusWindow'
@@ -1258,6 +1263,8 @@ struct ImGuiContext
         MouseViewport = MouseLastHoveredViewport = NULL;
         PlatformLastFocusedViewport = 0;
         ViewportFrontMostStampCount = 0;
+        UseRichText = false;
+        FirstValidViewport = 1;
 
         NavWindow = NULL;
         NavId = NavActivateId = NavActivateDownId = NavActivatePressedId = NavInputId = 0;
@@ -1548,7 +1555,7 @@ public:
     float       CalcFontSize() const        { ImGuiContext& g = *GImGui; float scale = g.FontBaseSize * FontWindowScale * FontDpiScale; if (ParentWindow) scale *= ParentWindow->FontWindowScale; return scale; }
     float       TitleBarHeight() const      { ImGuiContext& g = *GImGui; return (Flags & ImGuiWindowFlags_NoTitleBar) ? 0.0f : CalcFontSize() + g.Style.FramePadding.y * 2.0f; }
     ImRect      TitleBarRect() const        { return ImRect(Pos, ImVec2(Pos.x + SizeFull.x, Pos.y + TitleBarHeight())); }
-    float       MenuBarHeight() const       { ImGuiContext& g = *GImGui; return (Flags & ImGuiWindowFlags_MenuBar) ? DC.MenuBarOffset.y + CalcFontSize() + g.Style.FramePadding.y * 2.0f : 0.0f; }
+    float       MenuBarHeight() const       { ImGuiContext& g = *GImGui; return (Flags & ImGuiWindowFlags_TitleMenuBar) ? 0.0f : (Flags & ImGuiWindowFlags_MenuBar) ? DC.MenuBarOffset.y + CalcFontSize() + g.Style.FramePadding.y * 2.0f : 0.0f; }
     ImRect      MenuBarRect() const         { float y1 = Pos.y + TitleBarHeight(); return ImRect(Pos.x, y1, Pos.x + SizeFull.x, y1 + MenuBarHeight()); }
 };
 

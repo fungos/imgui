@@ -732,6 +732,21 @@ namespace ImGui
     IMGUI_API void              DestroyPlatformWindows();                                       // call DestroyWindow platform functions for all viewports. call from back-end Shutdown() if you need to close platform windows before imgui shutdown. otherwise will be called by DestroyContext().
     IMGUI_API ImGuiViewport*    FindViewportByID(ImGuiID id);                                   // this is a helper for back-ends.
     IMGUI_API ImGuiViewport*    FindViewportByPlatformHandle(void* platform_handle);            // this is a helper for back-ends. the type platform_handle is decided by the back-end (e.g. HWND, MyWindow*, GLFWwindow* etc.)
+    
+    // imgui_window
+    IMGUI_API bool          BeginFakeTitleBar();
+    IMGUI_API void          EndFakeTitleBar();
+    IMGUI_API bool          BeginTitleMenuBar(const char *title, bool* p_open = NULL);          // create and append to a full screen title-bar with menu-bar embedded.
+    IMGUI_API void          EndTitleMenuBar();                                                  // only call EndTitleMenuBar() if BeginTitleMenuBar() returns true!
+
+    // imgui_richtext
+    typedef ImVec2(*ImRichTextElementDrawCallback)(ImVec2 pos, ImDrawList *drawlist, const char* tag_start, const char* tag_end);
+    typedef ImVec2(*ImRichTextElementCalcSizeCallback)(const char* tag_start, const char *tag_end);
+    IMGUI_API void          SetRichTextElementCallbacks(ImRichTextElementCalcSizeCallback calcSizeCb, ImRichTextElementDrawCallback drawCb);
+    IMGUI_API void          EnableRichText();
+    IMGUI_API void          DisableRichText();
+    IMGUI_API void          RenderRichTextClipped(const ImVec2& pos_min, const ImVec2& pos_max, const char* text, const char* text_end, const ImVec2* text_size_if_known, const ImVec2& align = ImVec2(0, 0));
+    IMGUI_API ImVec2        CalcRichTextSize(const char* text, const char* text_end = NULL, bool hide_text_after_double_hash = false, float wrap_width = -1.0f);
 
 } // namespace ImGui
 
@@ -776,8 +791,9 @@ enum ImGuiWindowFlags_
     ImGuiWindowFlags_Popup                  = 1 << 26,  // Don't use! For internal use by BeginPopup()
     ImGuiWindowFlags_Modal                  = 1 << 27,  // Don't use! For internal use by BeginPopupModal()
     ImGuiWindowFlags_ChildMenu              = 1 << 28,  // Don't use! For internal use by BeginMenu()
-    ImGuiWindowFlags_DockNodeHost           = 1 << 29   // Don't use! For internal use by Begin()/NewFrame()
-
+    ImGuiWindowFlags_DockNodeHost           = 1 << 29,  // Don't use! For internal use by Begin()/NewFrame()
+    ImGuiWindowFlags_TitleMenuBar           = 1 << 30,  // Don't use! For internal use by BeginTitleMenuBar()/EndTitleMenuBar()
+    
     // [Obsolete]
     //ImGuiWindowFlags_ShowBorders          = 1 << 7,   // --> Set style.FrameBorderSize=1.0f / style.WindowBorderSize=1.0f to enable borders around windows and items
     //ImGuiWindowFlags_ResizeFromAnySide    = 1 << 17,  // --> Set io.ConfigWindowsResizeFromEdges and make sure mouse cursors are supported by back-end (io.BackendFlags & ImGuiBackendFlags_HasMouseCursors)
@@ -2340,6 +2356,7 @@ struct ImGuiPlatformIO
 
     // (Optional) Platform functions (e.g. Win32, GLFW, SDL2)
     // Most of them are called by ImGui::UpdatePlatformWindows() and ImGui::RenderPlatformWindowsDefault().
+    void*   (*Platform_BindMainWindow)();
     void    (*Platform_CreateWindow)(ImGuiViewport* vp);                    // Create a new platform window for the given viewport
     void    (*Platform_DestroyWindow)(ImGuiViewport* vp);
     void    (*Platform_ShowWindow)(ImGuiViewport* vp);                      // Newly created windows are initially hidden so SetWindowPos/Size/Title can be called on them first

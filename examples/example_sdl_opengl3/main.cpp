@@ -9,6 +9,68 @@
 #include <stdio.h>
 #include <SDL.h>
 
+#define TITLEBAR_TEST 1
+#if TITLEBAR_TEST
+    #define BORDER_TYPE SDL_WINDOW_BORDERLESS
+#else
+    #define BORDER_TYPE 0
+#endif
+
+// return y increment of 0 so to not modify line height
+static ImVec2 CustomRichTextElementDrawCallback(ImVec2 pos, ImDrawList *drawlist, const char* tag_begin, const char *tag_end)
+{
+    const float height = 19.0f; // We're drawing inside the window title bar, so it would be better get the titlebar height here
+    const float width = 29.0f;
+
+    auto size = tag_end - tag_begin;
+    if (memcmp("icon.png", tag_begin, size) == 0)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        ImTextureID my_tex_id = io.Fonts->TexID;
+        float my_tex_w = (float)io.Fonts->TexWidth;
+        float my_tex_h = (float)io.Fonts->TexHeight;
+        ImGui::ImageButton(my_tex_id, ImVec2(height, height), ImVec2(0, 0), ImVec2(height / my_tex_w, height / my_tex_h), 0, ImColor(0, 0, 0, 255));
+        return ImVec2(height, 0.0f);
+    }
+    else if (memcmp("healthbar", tag_begin, size) == 0)
+    {
+        // Create a dummy array of contiguous float values to plot
+        // Tip: If your float aren't contiguous but part of a structure, you can pass a pointer to your first float and the sizeof() of your structure in the Stride parameter.
+        static float values[20] = {0};
+        static int values_offset = 0;
+        static double refresh_time = 0.0;
+        while (refresh_time < ImGui::GetTime()) // Create dummy data at fixed 60 hz rate for the demo
+        {
+            static float phase = 0.0f;
+            values[values_offset] = cosf(phase);
+            values_offset = (values_offset + 1) % IM_ARRAYSIZE(values);
+            phase += 0.10f*values_offset;
+            refresh_time += 1.0f / 60.0f;
+        }
+        ImGui::PlotLines("HP", values, IM_ARRAYSIZE(values), values_offset, "", -1.0f, 1.0f, ImVec2(30, height));
+        return ImVec2(45.0f, 0.0f); // plot width + "hp" width
+    }
+
+    return ImVec2(width, 0.0f); // 0 so to not modify line height
+}
+
+// return y increment of 0 so to not modify line height
+static ImVec2 CustomRichTextElementCalcSizeCallback(const char* tag_begin, const char *tag_end)
+{
+    const float height = 26.0f; // should be current window TitleBarHeight
+
+    auto size = tag_end - tag_begin;
+    if (memcmp("icon.png", tag_begin, size) == 0)
+    {
+        return ImVec2(19.0f, 0.0f);
+    }
+    else if (memcmp("healthbar", tag_begin, size) == 0)
+    {
+        return ImVec2(45.0f, 0.0f);
+    }
+    return ImVec2(height, 0.0f); // 0 so to not modify line height
+}
+
 // About OpenGL function loaders: modern OpenGL doesn't have a standard header file and requires individual function pointers to be loaded manually.
 // Helper libraries are often used for this purpose! Here we are supporting a few common ones: gl3w, glew, glad.
 // You may use another loader/header of your choice (glext, glLoadGen, etc.), or chose to manually implement your own.
@@ -53,7 +115,7 @@ int main(int, char**)
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | BORDER_TYPE);
     SDL_Window* window = SDL_CreateWindow("Dear ImGui SDL2+OpenGL3 example", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags);
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, gl_context);
@@ -83,6 +145,7 @@ int main(int, char**)
     //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
+    io.ConfigFlags |= ImGuiViewportFlags_CanHostOtherWindows;
     //io.ConfigViewportsNoAutoMerge = true;
     //io.ConfigViewportsNoTaskBarIcon = true;
 
@@ -118,9 +181,11 @@ int main(int, char**)
     //IM_ASSERT(font != NULL);
 
     // Our state
-    bool show_demo_window = true;
+    bool show_demo_window = false;
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    
+    ImGui::SetRichTextElementCallbacks(CustomRichTextElementCalcSizeCallback, CustomRichTextElementDrawCallback);
 
     // Main loop
     bool done = false;
@@ -146,12 +211,37 @@ int main(int, char**)
         ImGui_ImplSDL2_NewFrame(window);
         ImGui::NewFrame();
 
+#if TITLEBAR_TEST
+        // 0. Bind the Titlebar to the application main window and add custom wigets to it
+        // This unfortunatelly currently breaks window parenting (and probably docking)
+        // I will try to fix it, but it is taking some time to understand the parenting flow
+        // and there is always something wrong in all my tries, pointing out to me that I still
+        // don't completely understood this logic
+        ImGui::EnableRichText();
+        static bool is_open = true;
+        if (ImGui::BeginTitleMenuBar("{icon.png} App Main Window Custom Title Bar - {healthbar} - ", &is_open))
+        {
+            ImGui::DisableRichText();
+            if (ImGui::BeginMenu("Menu"))
+            {
+                ImGui::MenuItem("Submenu", NULL, false, false);
+                ImGui::EndMenu();
+            }
+            ImGui::EndTitleMenuBar();
+        }
+        
+        if (!is_open)
+        {
+            done = true;
+        }
+#endif
+
         // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
         if (show_demo_window)
             ImGui::ShowDemoWindow(&show_demo_window);
 
         // 2. Show a simple window that we create ourselves. We use a Begin/End pair to created a named window.
-        {
+        if (0) {
             static float f = 0.0f;
             static int counter = 0;
 

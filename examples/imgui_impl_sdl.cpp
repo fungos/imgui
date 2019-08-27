@@ -427,6 +427,20 @@ struct ImGuiViewportDataSDL2
     ~ImGuiViewportDataSDL2() { IM_ASSERT(Window == NULL && GLContext == NULL); }
 };
 
+static void* ImGui_ImplSDL2_BindMainWindow()
+{
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGuiViewportDataSDL2* data = (ImGuiViewportDataSDL2*)viewport->PlatformUserData;
+    int wW, wH, wX, wY;
+    SDL_GetWindowSize(data->Window, &wW, &wH);
+    SDL_GetWindowPosition(data->Window, &wX, &wY);
+    viewport->Pos = ImVec2(float(wX), float(wY));
+    viewport->Size = ImVec2(float(wW), float(wH));
+    viewport->DpiScale = 1.0f;
+    viewport->PlatformHandle = (void*)data->Window;
+    return viewport->PlatformHandle;
+}
+
 static void ImGui_ImplSDL2_CreateWindow(ImGuiViewport* viewport)
 {
     ImGuiViewportDataSDL2* data = IM_NEW(ImGuiViewportDataSDL2)();
@@ -637,6 +651,7 @@ static void ImGui_ImplSDL2_InitPlatformInterface(SDL_Window* window, void* sdl_g
 {
     // Register platform interface (will be coupled with a renderer interface)
     ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Platform_BindMainWindow = ImGui_ImplSDL2_BindMainWindow;
     platform_io.Platform_CreateWindow = ImGui_ImplSDL2_CreateWindow;
     platform_io.Platform_DestroyWindow = ImGui_ImplSDL2_DestroyWindow;
     platform_io.Platform_ShowWindow = ImGui_ImplSDL2_ShowWindow;

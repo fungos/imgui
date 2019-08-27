@@ -1111,7 +1111,7 @@ static void             RenderWindowTitleBarContents(ImGuiWindow* window, const 
 static void             EndFrameDrawDimmedBackgrounds();
 
 // Viewports
-const ImGuiID           IMGUI_VIEWPORT_DEFAULT_ID = 0x11111111; // Using an arbitrary constant instead of e.g. ImHashStr("ViewportDefault", 0); so it's easier to spot in the debugger. The exact value doesn't matter.
+static ImGuiID          IMGUI_VIEWPORT_DEFAULT_ID = 0x11111111; // Using an arbitrary constant instead of e.g. ImHashStr("ViewportDefault", 0); so it's easier to spot in the debugger. The exact value doesn't matter.
 static ImGuiViewportP*  AddUpdateViewport(ImGuiWindow* window, ImGuiID id, const ImVec2& platform_pos, const ImVec2& size, ImGuiViewportFlags flags);
 static void             UpdateViewportsNewFrame();
 static void             UpdateViewportsEndFrame();
@@ -2522,6 +2522,16 @@ void ImGui::RenderTextClipped(const ImVec2& pos_min, const ImVec2& pos_max, cons
         return;
 
     ImGuiContext& g = *GImGui;
+    
+    // if using rich text extension, detour the logic to the extended version that is more costly
+    if (g.UseRichText)
+    {
+        g.UseRichText = false;
+        RenderRichTextClipped(pos_min, pos_max, text, text_display_end, text_size_if_known, align/*, clip_rect*/); // FIXME: find a solution as ImRect is not exposed to the public API
+        g.UseRichText = true;
+        return;
+    }
+    
     ImGuiWindow* window = g.CurrentWindow;
     RenderTextClippedEx(window->DrawList, pos_min, pos_max, text, text_display_end, text_size_if_known, align, clip_rect);
     if (g.LogEnabled)
@@ -2698,6 +2708,24 @@ void ImGui::RenderNavHighlight(const ImRect& bb, ImGuiID id, ImGuiNavHighlightFl
 //-----------------------------------------------------------------------------
 // [SECTION] MAIN CODE (most of the code! lots of stuff, needs tidying up!)
 //-----------------------------------------------------------------------------
+
+// Helper platform io function to force binding a viewport to the application
+// window, note that this modifies the IMGUI_VIEWPORT_DEFAULT_ID
+static void ImGuiBindMainWindow(ImGuiWindow *window)
+{
+    ImGuiContext& g = *GImGui;
+    ImGuiViewportP *viewport = g.Viewports[0];
+    if (viewport->Window == nullptr)
+    {
+        ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+        platform_io.Platform_BindMainWindow();
+    }
+
+    ImGui::IMGUI_VIEWPORT_DEFAULT_ID = window->ID;
+    viewport->ID = window->ID;
+    viewport->Window = window;
+    viewport->PlatformWindowCreated = true;
+}
 
 // ImGuiWindow is mostly a dumb struct. It merely has a constructor and a few helper methods
 ImGuiWindow::ImGuiWindow(ImGuiContext* context, const char* name)
@@ -4124,6 +4152,7 @@ void ImGui::Initialize(ImGuiContext* context)
     IM_ASSERT(g.DockContext == NULL);
     DockContextInitialize(&g);
 
+    g.UseRichText = false;
     g.Initialized = true;
 }
 
@@ -4578,6 +4607,15 @@ ImVec2 ImGui::CalcTextSize(const char* text, const char* text_end, bool hide_tex
         text_display_end = FindRenderedTextEnd(text, text_end);      // Hide anything after a '##' string
     else
         text_display_end = text_end;
+
+    // if using rich text extension, detour the logic to the extended version that is more costly
+    if (g.UseRichText)
+    {
+        g.UseRichText = false;
+        ImVec2 size = CalcRichTextSize(text, text_display_end, hide_text_after_double_hash, wrap_width);
+        g.UseRichText = true;
+        return size;
+    }
 
     ImFont* font = g.Font;
     const float font_size = g.FontSize;
@@ -5597,7 +5635,11 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         // in order for their pos/size to be matching their undocking state.)
         if (!(flags & ImGuiWindowFlags_NoTitleBar) && !window->DockIsActive)
         {
-            ImU32 title_bar_col = GetColorU32(title_bar_is_highlight ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg);
+            ImU32 title_bar_col;
+            if (window->Flags & ImGuiWindowFlags_TitleMenuBar)
+                title_bar_col = GetColorU32(ImGuiCol_TitleBgActive); // we shoukd check OS focus and update this
+            else
+                title_bar_col = GetColorU32(title_bar_is_highlight ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg);
             window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, window_rounding, ImDrawCornerFlags_Top);
         }
 
@@ -5633,7 +5675,7 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
             Scrollbar(ImGuiAxis_Y);
 
         // Render resize grips (after their input handling so we don't have a frame of latency)
-        if (handle_borders_and_resize_grips && !(flags & ImGuiWindowFlags_NoResize))
+        if (handle_borders_and_resize_grips && !(flags & (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_TitleMenuBar)))
         {
             for (int resize_grip_n = 0; resize_grip_n < resize_grip_count; resize_grip_n++)
             {
@@ -5736,6 +5778,9 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
         ImVec2 off = ImVec2(0.0f, (float)(int)(-g.FontSize * 0.25f));
         RenderTextClipped(marker_pos + off, layout_r.Max + off, UNSAVED_DOCUMENT_MARKER, NULL, NULL, ImVec2(0, style.WindowTitleAlign.y), &clip_r);
     }
+
+    if (window->Flags & ImGuiWindowFlags_TitleMenuBar)
+        window->DC.CursorPos.x += text_size.x + style.FramePadding.x;
 }
 
 void ImGui::UpdateWindowParentAndRootLinks(ImGuiWindow* window, ImGuiWindowFlags flags, ImGuiWindow* parent_window)
@@ -5780,6 +5825,10 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
         ImVec2 size_on_first_use = (g.NextWindowData.Flags & ImGuiNextWindowDataFlags_HasSize) ? g.NextWindowData.SizeVal : ImVec2(0.0f, 0.0f); // Any condition flag will do since we are creating a new window here.
         window = CreateNewWindow(name, size_on_first_use, flags);
     }
+
+    // TitleMenuBar binds the current imgui window to the real OS application window
+    if (flags & ImGuiWindowFlags_TitleMenuBar)
+        ImGuiBindMainWindow(window);
 
     // Automatically disable manual moving/resizing when NoInputs is set
     if ((flags & ImGuiWindowFlags_NoInputs) == ImGuiWindowFlags_NoInputs)
@@ -10339,7 +10388,7 @@ static bool ImGui::UpdateTryMergeWindowIntoHostViewport(ImGuiWindow* window, ImG
         ImGuiWindow* window_behind = g.Windows[n];
         if (window_behind == window)
             break;
-        if (window_behind->WasActive && window_behind->ViewportOwned && !(window_behind->Flags & ImGuiWindowFlags_ChildWindow))
+        if (window_behind->WasActive && window_behind->ViewportOwned && !(window_behind->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_TitleMenuBar)))
             if (window_behind->Viewport->GetRect().Overlaps(window->Rect()))
                 return false;
     }
@@ -10367,7 +10416,7 @@ static bool ImGui::UpdateTryMergeWindowIntoHostViewports(ImGuiWindow* window)
 void ImGui::TranslateWindowsInViewport(ImGuiViewportP* viewport, const ImVec2& old_pos, const ImVec2& new_pos)
 {
     ImGuiContext& g = *GImGui;
-    IM_ASSERT(viewport->Window == NULL && (viewport->Flags & ImGuiViewportFlags_CanHostOtherWindows));
+    //IM_ASSERT(viewport->Window == NULL && (viewport->Flags & ImGuiViewportFlags_CanHostOtherWindows));
 
     // 1) We test if ImGuiConfigFlags_ViewportsEnable was just toggled, which allows us to conveniently
     // translate imgui windows from OS-window-local to absolute coordinates or vice-versa.
@@ -10443,12 +10492,12 @@ static void ImGui::UpdateViewportsNewFrame()
     // Create/update main viewport with current platform position and size
     ImGuiViewportP* main_viewport = g.Viewports[0];
     IM_ASSERT(main_viewport->ID == IMGUI_VIEWPORT_DEFAULT_ID);
-    IM_ASSERT(main_viewport->Window == NULL);
+    //IM_ASSERT(main_viewport->Window == NULL);
     ImVec2 main_viewport_platform_pos = ImVec2(0.0f, 0.0f);
     ImVec2 main_viewport_platform_size = g.IO.DisplaySize;
     if (g.ConfigFlagsCurrFrame & ImGuiConfigFlags_ViewportsEnable)
         main_viewport_platform_pos = (main_viewport->Flags & ImGuiViewportFlags_Minimized) ? main_viewport->Pos : g.PlatformIO.Platform_GetWindowPos(main_viewport);
-    AddUpdateViewport(NULL, IMGUI_VIEWPORT_DEFAULT_ID, main_viewport_platform_pos, main_viewport_platform_size, ImGuiViewportFlags_CanHostOtherWindows);
+    AddUpdateViewport(main_viewport->Window, IMGUI_VIEWPORT_DEFAULT_ID, main_viewport_platform_pos, main_viewport_platform_size, ImGuiViewportFlags_CanHostOtherWindows);
 
     g.CurrentViewport = NULL;
     g.MouseViewport = NULL;
@@ -10660,7 +10709,7 @@ ImGuiViewportP* ImGui::AddUpdateViewport(ImGuiWindow* window, ImGuiID id, const 
     viewport->LastFrameActive = g.FrameCount;
     IM_ASSERT(window == NULL || viewport->ID == window->ID);
 
-    if (window != NULL)
+    if (window != NULL && viewport->ID == window->ID)
         window->ViewportOwned = true;
 
     return viewport;
@@ -10806,7 +10855,7 @@ void ImGui::UpdatePlatformWindows()
 
     // Create/resize/destroy platform windows to match each active viewport.
     // Skip the main viewport (index 0), which is always fully handled by the application!
-    for (int i = 1; i < g.Viewports.Size; i++)
+    for (int i = g.FirstValidViewport; i < g.Viewports.Size; i++)
     {
         ImGuiViewportP* viewport = g.Viewports[i];
 
@@ -10843,7 +10892,7 @@ void ImGui::UpdatePlatformWindows()
         if ((viewport->LastPlatformPos.x != viewport->Pos.x || viewport->LastPlatformPos.y != viewport->Pos.y) && !viewport->PlatformRequestMove)
             g.PlatformIO.Platform_SetWindowPos(viewport, viewport->Pos);
         if ((viewport->LastPlatformSize.x != viewport->Size.x || viewport->LastPlatformSize.y != viewport->Size.y) && !viewport->PlatformRequestResize)
-            g.PlatformIO.Platform_SetWindowSize(viewport, viewport->Size);
+            g.PlatformIO.Platform_SetWindowSize(viewport, viewport->Size); // dgrein <- resize to match titlebar
         if ((viewport->LastRendererSize.x != viewport->Size.x || viewport->LastRendererSize.y != viewport->Size.y) && g.PlatformIO.Renderer_SetWindowSize)
             g.PlatformIO.Renderer_SetWindowSize(viewport, viewport->Size);
         viewport->LastPlatformPos = viewport->Pos;
